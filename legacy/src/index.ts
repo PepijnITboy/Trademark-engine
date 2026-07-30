@@ -12,3 +12,10 @@ export type {
   SimilarityScores,
   TrademarkCompareInput,
 } from './types.js';
+export {
+  EuipoClient,
+  EuipoOAuthClient,
+  loadEuipoConfig,
+  DEFAULT_SEARCH_FIELDS,
+} from './euipo/index.js';
+export type { EuipoConfig, EuipoSearchParams } from './euipo/index.js';

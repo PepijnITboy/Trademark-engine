@@ -1,0 +1,38 @@
+{
+  "name": "@trademark-engine/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.2",
+    "@trademark-engine/comparison": "workspace:*",
+    "@trademark-engine/corpus-bridge": "workspace:*",
+    "@trademark-engine/database": "workspace:*",
+    "@trademark-engine/domain": "workspace:*",
+    "@trademark-engine/evaluation": "workspace:*",
+    "@trademark-engine/explanations": "workspace:*",
+    "@trademark-engine/fixtures": "workspace:*",
+    "@trademark-engine/normalization": "workspace:*",
+    "@trademark-engine/observability": "workspace:*",
+    "@trademark-engine/pruning": "workspace:*",
+    "@trademark-engine/retrieval": "workspace:*",
+    "@trademark-engine/risk-engine": "workspace:*",
+    "@trademark-engine/token-analysis": "workspace:*",
+    "drizzle-orm": "^0.38.3",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

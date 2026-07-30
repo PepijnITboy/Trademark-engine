@@ -1,0 +1,27 @@
+{
+  "name": "@trademark-engine/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@trademark-engine/domain": "workspace:*",
+    "@trademark-engine/normalization": "workspace:*",
+    "@trademark-engine/observability": "workspace:*",
+    "@trademark-engine/phonetics": "workspace:*",
+    "@trademark-engine/token-analysis": "workspace:*",
+    "@trademark-engine/transliteration": "workspace:*",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

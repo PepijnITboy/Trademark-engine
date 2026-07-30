@@ -1,29 +1,47 @@
 {
-  "name": "@trademark-engine/core",
-  "version": "0.1.0",
+  "name": "trademark-engine",
   "private": true,
-  "type": "module",
-  "description": "Standalone trademark comparison engine: compare marks → risk band + evidence.",
   "packageManager": "pnpm@9.15.0",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
+  "engines": {
+    "node": ">=22"
   },
-  "files": [
-    "dist"
-  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "test:unit": "vitest run",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "dev": "turbo run dev --parallel --filter=@trademark-engine/api --filter=@trademark-engine/dashboard",
+    "dev:api": "pnpm --filter @trademark-engine/api dev",
+    "dev:dashboard": "pnpm --filter @trademark-engine/dashboard dev",
+    "dev:worker": "pnpm --filter @trademark-engine/worker dev",
+    "dev:phonetic": "pnpm --filter @trademark-engine/phonetic-service dev",
+    "db:migrate": "pnpm --filter @trademark-engine/database migrate",
+    "db:generate": "pnpm --filter @trademark-engine/database generate",
+    "corpus:bridge": "tsx scripts/bridge-100k.ts",
+    "corpus:bridge-100k": "tsx scripts/bridge-100k.ts",
+    "corpus:purge-statuses": "tsx scripts/purge-non-allowlist-statuses.ts",
+    "corpus:preprocess": "tsx scripts/preprocess-100k.ts",
+    "corpus:preprocess-100k": "tsx scripts/preprocess-100k.ts"
+  },
+  "dependencies": {
+    "@trademark-engine/corpus-bridge": "workspace:*",
+    "@trademark-engine/database": "workspace:*",
+    "@trademark-engine/domain": "workspace:*",
+    "@trademark-engine/ngrams": "workspace:*",
+    "@trademark-engine/normalization": "workspace:*",
+    "@trademark-engine/phonetics": "workspace:*",
+    "@trademark-engine/token-analysis": "workspace:*",
+    "@trademark-engine/transliteration": "workspace:*",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.38.3"
   },
   "devDependencies": {
-    "typescript": "^5.7.3",
+    "@types/node": "^22.10.0",
+    "fast-check": "^3.23.2",
+    "tsx": "^4.19.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }
 }

@@ -11,12 +11,15 @@ import { stage1Prune } from "@trademark-engine/pruning";
 import {
   applyStrategyCap,
   assertEngineCorpusReady,
+  buildCoreRetrievalKeys,
   buildPhoneticLookupKeys,
+  buildTransliterationLookupKeys,
   countPreCapPhonetic,
   countPreCapTrigram,
   defaultRetrievalProfile,
   EMPTY_BRIDGE_ERROR,
   fetchTrademarkHitsByIds,
+  mergeHitsReservingCore,
   retrieveExactCompact,
   retrievePhoneticKeys,
   retrieveTrigramCompact,
@@ -313,12 +316,23 @@ async function processOneMark(
 
   const profile = defaultRetrievalProfile();
   const cap = pickLengthBucketThreshold(normalized.compact.length, profile.strategyCaps);
-  const exactKeys = [
+  const baseExactKeys = [
     normalized.compact,
     normalized.caseFolded.replace(/[^\p{L}\p{N}]+/gu, "").toLocaleLowerCase("und"),
     normalized.diacriticsFolded.replace(/[^\p{L}\p{N}]+/gu, "").toLocaleLowerCase("und"),
     normalized.asciiFolded.replace(/[^\p{L}\p{N}]+/gu, "").toLocaleLowerCase("und"),
   ].filter(Boolean);
+  const translitKeys = buildTransliterationLookupKeys(markText);
+  const coreRetrieval = buildCoreRetrievalKeys(markText);
+  const exactKeySet = new Set(baseExactKeys);
+  const novelTranslitKeys = translitKeys.filter((key) => key && !exactKeySet.has(key));
+  const novelCoreKeys = coreRetrieval.keys.filter(
+    (key) => key && !exactKeySet.has(key) && !novelTranslitKeys.includes(key),
+  );
+  for (const key of novelCoreKeys) {
+    exactKeySet.add(key);
+  }
+  const exactKeys = [...exactKeySet];
 
   beginStage(scan, "exact_retrieval");
   await yieldEventLoop();
@@ -335,35 +349,73 @@ async function processOneMark(
       preCap: exactHits.length,
       postCap: exactHits.length,
       cap,
+      coreKeyCount: novelCoreKeys.length,
+    },
+  });
+  await yieldEventLoop();
+
+  beginStage(scan, "transliteration_retrieval");
+  await yieldEventLoop();
+  const translitHits = (
+    await Promise.all(novelTranslitKeys.map((key) => retrieveExactCompact(db, key, cap)))
+  )
+    .flat()
+    .filter(
+      (hit, index, all) =>
+        all.findIndex((candidate) => candidate.trademarkId === hit.trademarkId) === index,
+    );
+  completeStage(scan, "transliteration_retrieval", {
+    counts: {
+      preCap: translitHits.length,
+      postCap: translitHits.length,
+      cap,
+      keyCount: novelTranslitKeys.length,
     },
   });
   await yieldEventLoop();
 
   beginStage(scan, "trigram_retrieval");
   await yieldEventLoop();
-  let trigramPreCap = exactHits.length;
+  // Prefer Latin transliteration keys for trigram when script differs — native
+  // non-Latin compact fills pg_trgm with unrelated rows and crowds out real hits.
+  const fullTrigramKeys =
+    novelTranslitKeys.length > 0 ? [...novelTranslitKeys] : [normalized.compact];
+  const coreTrigramKeys = coreRetrieval.keys.filter(
+    (key) => key && !fullTrigramKeys.includes(key),
+  );
+  let trigramPreCap = exactHits.length + translitHits.length;
   try {
-    trigramPreCap = await countPreCapTrigram(
-      db,
-      normalized.compact,
-      profile.minTrigramSimilarity,
+    const preCaps = await Promise.all(
+      [...fullTrigramKeys, ...coreTrigramKeys].map((key) =>
+        countPreCapTrigram(db, key, profile.minTrigramSimilarity),
+      ),
     );
+    trigramPreCap = preCaps.reduce((sum, count) => sum + count, 0);
   } catch {
-    trigramPreCap = exactHits.length;
+    trigramPreCap = exactHits.length + translitHits.length;
     scan.message = "Trigram pre-cap count unavailable; using post-cap count";
   }
 
-  const trigramHits = await retrieveTrigramCompact(
-    db,
-    normalized.compact,
-    profile.minTrigramSimilarity,
-    cap,
-  );
+  const [fullTrigramHits, coreTrigramHits] = await Promise.all([
+    Promise.all(
+      fullTrigramKeys.map((key) =>
+        retrieveTrigramCompact(db, key, profile.minTrigramSimilarity, cap),
+      ),
+    ).then((rows) => rows.flat()),
+    Promise.all(
+      coreTrigramKeys.map((key) =>
+        retrieveTrigramCompact(db, key, profile.minTrigramSimilarity, cap),
+      ),
+    ).then((rows) => rows.flat()),
+  ]);
+  const trigramHits = mergeHitsReservingCore(fullTrigramHits, coreTrigramHits, cap);
   completeStage(scan, "trigram_retrieval", {
     counts: {
       preCap: trigramPreCap,
       postCap: trigramHits.length,
       cap,
+      coreKeyCount: coreTrigramKeys.length,
+      coreHitCount: coreTrigramHits.length,
     },
   });
   await yieldEventLoop();
@@ -405,6 +457,12 @@ async function processOneMark(
     rank: index + 1,
     score: hit.score,
   }));
+  const translitRows: StrategyResultRow[] = translitHits.map((hit, index) => ({
+    trademarkId: hit.trademarkId,
+    strategy: "transliteration",
+    rank: index + 1,
+    score: hit.score,
+  }));
   const trigramRows: StrategyResultRow[] = trigramHits.map((hit, index) => ({
     trademarkId: hit.trademarkId,
     strategy: "trigram",
@@ -420,6 +478,14 @@ async function processOneMark(
 
   const cappedExact = applyStrategyCap(
     exactRows.map((row) => ({
+      trademarkId: row.trademarkId,
+      score: row.score,
+      evidence: [{ strategy: row.strategy, rank: row.rank, score: row.score }],
+    })),
+    cap,
+  );
+  const cappedTranslit = applyStrategyCap(
+    translitRows.map((row) => ({
       trademarkId: row.trademarkId,
       score: row.score,
       evidence: [{ strategy: row.strategy, rank: row.rank, score: row.score }],
@@ -452,6 +518,14 @@ async function processOneMark(
       score: item.score,
     }));
   }
+  if (cappedTranslit.kept.length > 0) {
+    unionInput.transliteration = cappedTranslit.kept.map((item, index) => ({
+      trademarkId: item.trademarkId,
+      strategy: "transliteration",
+      rank: index + 1,
+      score: item.score,
+    }));
+  }
   if (cappedTrigram.kept.length > 0) {
     unionInput.trigram = cappedTrigram.kept.map((item, index) => ({
       trademarkId: item.trademarkId,
@@ -473,6 +547,7 @@ async function processOneMark(
   completeStage(scan, "union", {
     counts: {
       exact: cappedExact.postCapCount,
+      transliteration: cappedTranslit.postCapCount,
       trigram: cappedTrigram.postCapCount,
       phonetic: cappedPhonetic.postCapCount,
       unique: union.length,
@@ -526,6 +601,11 @@ async function processOneMark(
           prefixScore: comparison.features.token.prefixOverlap ?? 0,
           suffixScore: comparison.features.token.suffixOverlap ?? 0,
           missingData: false,
+          coreTokenHit:
+            (comparison.features.token.significantOverlap ?? 0) > 0 ||
+            (comparison.features.token.coreCompactMatch ?? 0) >= 1 ||
+            (comparison.features.token.dominantTokenOverlap ?? 0) >= 1,
+          noiseOnlyHit: (comparison.features.token.noiseOnlyOverlap ?? 0) >= 0.5,
         },
       };
     })
@@ -681,11 +761,10 @@ async function processScan(id: string): Promise<void> {
     if (allFailed) {
       scan.error = scan.markResults.map((item) => item.error).filter(Boolean).join("; ");
       scan.message = scan.error;
+    } else if (scan.markTexts.length > 1) {
+      scan.message = `Completed ${scan.markResults.filter((item) => item.status === "completed").length}/${scan.markTexts.length} marks`;
     } else {
-      scan.message =
-        scan.markTexts.length > 1
-          ? `Completed ${scan.markResults.filter((item) => item.status === "completed").length}/${scan.markTexts.length} marks`
-          : null;
+      delete scan.message;
     }
     scan.completedAt = new Date();
   } catch (error) {
