@@ -9,8 +9,9 @@ export const SCAN_STAGE_WEIGHTS: Readonly<Record<string, number>> = {
   phonetic_retrieval: 10,
   union: 5,
   pruning: 10,
-  comparison: 25,
+  comparison: 15,
   scoring: 8,
+  attorney_analysis: 10,
   complete: 2,
 };
 
@@ -25,6 +26,7 @@ export const SCAN_STAGE_DEFINITIONS = [
   { id: "pruning", label: "Prune candidates" },
   { id: "comparison", label: "Compare pairs" },
   { id: "scoring", label: "Score & rank" },
+  { id: "attorney_analysis", label: "Anthropic attorney analysis" },
   { id: "complete", label: "Complete" },
 ] as const;
 

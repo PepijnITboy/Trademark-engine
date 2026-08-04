@@ -81,11 +81,54 @@ export interface ScanResultItem {
   explanations: string[];
 }
 
+export interface AttorneyDimension {
+  score: string;
+  toelichting: string;
+}
+
+export interface AttorneyRiskItem {
+  rank: number;
+  candidateId: string;
+  markText: string;
+  engineScore: number;
+  riskLevel: "hoog" | "middel" | "laag" | string;
+  summary: string;
+  dimensions: {
+    visueel: AttorneyDimension;
+    auditief: AttorneyDimension;
+    conceptueel: AttorneyDimension;
+    warenDiensten: AttorneyDimension;
+  };
+  confusionRisk: string;
+  whySelected: string;
+}
+
+export interface AttorneyAnalysisPayload {
+  status: "completed" | "skipped" | "failed" | string;
+  promptVersion?: string;
+  model?: string;
+  candidatesConsidered: number;
+  overallAdvice?: string;
+  aanbeveling?:
+    | "indienen_risicovol"
+    | "indienen_met_aanpassing"
+    | "nader_onderzoek"
+    | "laag_risico"
+    | string;
+  overallAdviceDetail?: {
+    text: string;
+    aanbeveling: string;
+  };
+  topRisks: AttorneyRiskItem[];
+  error?: string;
+}
+
 export interface ScanMarkResults {
   markText: string;
   status: string;
   resultCount: number;
   results: ScanResultItem[];
+  attorneyAnalysis?: AttorneyAnalysisPayload;
   error?: string;
 }
 
@@ -93,6 +136,7 @@ export interface ScanResultsResponse {
   results: ScanResultItem[];
   resultCount: number;
   mode: string;
+  attorneyAnalysis?: AttorneyAnalysisPayload;
   marks: ScanMarkResults[];
 }
 

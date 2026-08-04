@@ -63,6 +63,9 @@ importers:
       '@fastify/cors':
         specifier: ^10.0.2
         version: 10.1.0
+      '@trademark-engine/attorney-analysis':
+        specifier: workspace:*
+        version: link:../../packages/attorney-analysis
       '@trademark-engine/comparison':
         specifier: workspace:*
         version: link:../../packages/comparison
@@ -186,6 +189,25 @@ importers:
       tsx:
         specifier: ^4.19.2
         version: 4.23.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)(jsdom@25.0.1)
+
+  packages/attorney-analysis:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.52.0
+        version: 0.52.0
+      '@trademark-engine/domain':
+        specifier: workspace:*
+        version: link:../domain
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -492,6 +514,9 @@ importers:
       '@trademark-engine/domain':
         specifier: workspace:*
         version: link:../domain
+      '@trademark-engine/normalization':
+        specifier: workspace:*
+        version: link:../normalization
     devDependencies:
       typescript:
         specifier: ^5.7.2
@@ -524,6 +549,10 @@ importers:
         version: 2.1.9(@types/node@22.20.1)(jsdom@25.0.1)
 
 packages:
+
+  '@anthropic-ai/sdk@0.52.0':
+    resolution: {integrity: sha512-d4c+fg+xy9e46c8+YnrrgIQR45CZlAi7PwdzIfDXDM6ACxEZli1/fxhURsq30ZpMZy6LvSkr41jGq5aF5TD7rQ==}
+    hasBin: true
 
   '@asamuzakjp/css-color@3.2.0':
     resolution: {integrity: sha512-K1A6z8tS3XsmCMM86xoWdn7Fkdn9m6RSVtocUrJYIwZnFVkng/PvkEoWtOWmP+Scc6saYWHWZYbndEEXxl24jw==}
@@ -3062,6 +3091,8 @@ packages:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
 snapshots:
+
+  '@anthropic-ai/sdk@0.52.0': {}
 
   '@asamuzakjp/css-color@3.2.0':
     dependencies:

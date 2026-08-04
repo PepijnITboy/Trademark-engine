@@ -19,6 +19,7 @@ import {
   defaultRetrievalProfile,
   EMPTY_BRIDGE_ERROR,
   fetchTrademarkHitsByIds,
+  isEmbeddedCoreCompact,
   mergeHitsReservingCore,
   retrieveExactCompact,
   retrievePhoneticKeys,
@@ -26,9 +27,19 @@ import {
   unionCandidates,
   type StrategyResultRow,
 } from "@trademark-engine/retrieval";
-import { groupIntoFamilies, rankResults, scoreFromFeatures } from "@trademark-engine/risk-engine";
+import {
+  groupIntoFamilies,
+  rankEvidenceFromFeatures,
+  rankResults,
+  scoreFromFeatures,
+} from "@trademark-engine/risk-engine";
 import { tokenizeMark } from "@trademark-engine/token-analysis";
+import type { AttorneyAnalysisResult } from "@trademark-engine/attorney-analysis";
 import type { EngineScanResult } from "@trademark-engine/evaluation";
+import {
+  runAttorneyAnalysisStage,
+  type AttorneyStageConfig,
+} from "./attorney-stage.js";
 import {
   SCAN_STAGE_DEFINITIONS,
   SCAN_STAGE_WEIGHTS,
@@ -66,6 +77,7 @@ export interface ScanMarkResult {
   readonly markText: string;
   status: ScanMarkStatus;
   results: ScanResultItem[];
+  attorneyAnalysis?: AttorneyAnalysisResult;
   error?: string;
 }
 
@@ -80,6 +92,7 @@ export interface ScanRecord {
   currentMarkIndex: number;
   completedAt?: Date;
   results?: ScanResultItem[];
+  attorneyAnalysis?: AttorneyAnalysisResult;
   error?: string;
   message?: string;
 }
@@ -102,17 +115,32 @@ export interface ScanProgressResponse {
 
 const MAX_MARKS_PER_SCAN = 10;
 
+const DEFAULT_ATTORNEY_CONFIG: AttorneyStageConfig = {
+  enabled: false,
+  model: "claude-sonnet-4-6",
+  candidateLimit: 1000,
+  topN: 10,
+  temperature: 0,
+};
+
 const scans = new Map<string, ScanRecord>();
 let configuredDatabaseUrl: string | undefined;
 let hasConfiguredDatabaseUrl = false;
+let attorneyConfig: AttorneyStageConfig = { ...DEFAULT_ATTORNEY_CONFIG };
 
 function yieldEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-export function configureScanStore(options: { databaseUrl?: string | undefined }): void {
+export function configureScanStore(options: {
+  databaseUrl?: string | undefined;
+  attorneyAnalysis?: AttorneyStageConfig;
+}): void {
   configuredDatabaseUrl = options.databaseUrl;
   hasConfiguredDatabaseUrl = true;
+  if (options.attorneyAnalysis) {
+    attorneyConfig = options.attorneyAnalysis;
+  }
 }
 
 /** Split / normalize proposed marks; max 10 unique non-empty names. */
@@ -318,6 +346,9 @@ async function processOneMark(
   const cap = pickLengthBucketThreshold(normalized.compact.length, profile.strategyCaps);
   const baseExactKeys = [
     normalized.compact,
+    // Legal-stripped stem for coined+BV/LLC retrieval; exact scoring still uses
+    // full compact so SOLUTIONS CO cannot false-exact SOLUTIONS.
+    normalized.stemCompact,
     normalized.caseFolded.replace(/[^\p{L}\p{N}]+/gu, "").toLocaleLowerCase("und"),
     normalized.diacriticsFolded.replace(/[^\p{L}\p{N}]+/gu, "").toLocaleLowerCase("und"),
     normalized.asciiFolded.replace(/[^\p{L}\p{N}]+/gu, "").toLocaleLowerCase("und"),
@@ -439,6 +470,7 @@ async function processOneMark(
     phoneticLookup.keys,
     phoneticLookup.algorithms,
     cap,
+    normalized.compact,
   );
   completeStage(scan, "phonetic_retrieval", {
     counts: {
@@ -592,9 +624,24 @@ async function processOneMark(
         lengths: {
           proposed: normalized.compact.length,
           candidate: candidateNorm.compact.length,
+          // Empty-core legal stacks (BV CO): fall back to stemCompact length so
+          // length-ratio does not discard stem-exact BV hits as 4-vs-2 cliffs.
+          proposedCore: tokens.coreCompact.length || normalized.stemCompact.length,
+          candidateCore:
+            tokenizeMark(hit.markText).coreCompact.length || candidateNorm.stemCompact.length,
         },
         features: {
-          exactMatch: normalized.compact === candidateNorm.compact,
+          exactMatch:
+            normalized.compact === candidateNorm.compact ||
+            (!!normalized.stemCompact &&
+              (normalized.stemCompact === candidateNorm.compact ||
+                normalized.stemCompact === candidateNorm.stemCompact)) ||
+            (!!candidateNorm.stemCompact &&
+              normalized.compact === candidateNorm.stemCompact),
+          embeddedCoreMatch: isEmbeddedCoreCompact(
+            normalized.compact,
+            candidateNorm.compact,
+          ),
           phoneticKeyMatch: (comparison.features.phonetic.primaryKeyMatch ?? 0) > 0,
           transliterationExact: (comparison.features.exact.transliterationMatch ?? 0) >= 1,
           trigramDice: comparison.features.orthographic.trigramDice ?? 0,
@@ -669,6 +716,7 @@ async function processOneMark(
       independentChannelCount: item.retrievalFamilies.length,
       activeRight: item.status === "registered",
       ownerKey: null,
+      ...rankEvidenceFromFeatures(item.comparison.features),
     });
     if (index > 0 && index % 25 === 0) {
       await yieldEventLoop();
@@ -694,6 +742,48 @@ async function processOneMark(
   completeStage(scan, "scoring", {
     counts: { results: results.length },
   });
+  await yieldEventLoop();
+
+  beginStage(scan, "attorney_analysis");
+  const attorneyAnalysis = await runAttorneyAnalysisStage({
+    proposed: {
+      markText,
+      ...(scan.input.selectedNiceClasses !== undefined
+        ? { selectedNiceClasses: scan.input.selectedNiceClasses }
+        : {}),
+      ...(scan.input.goodsServices !== undefined
+        ? { goodsServices: scan.input.goodsServices }
+        : {}),
+    },
+    results,
+    config: attorneyConfig,
+  });
+
+  const markResult = scan.markResults[scan.currentMarkIndex];
+  if (markResult) {
+    markResult.attorneyAnalysis = attorneyAnalysis;
+  }
+  scan.attorneyAnalysis = attorneyAnalysis;
+
+  if (attorneyAnalysis.status === "failed") {
+    failStage(
+      scan,
+      "attorney_analysis",
+      attorneyAnalysis.error ?? "Attorney analysis failed",
+    );
+  } else {
+    const stageMessage =
+      attorneyAnalysis.status === "skipped"
+        ? (attorneyAnalysis.error ?? "Attorney analysis skipped")
+        : `Anthropic top ${attorneyAnalysis.topRisks.length} risks`;
+    completeStage(scan, "attorney_analysis", {
+      counts: {
+        candidatesSent: attorneyAnalysis.candidatesConsidered,
+        topRisks: attorneyAnalysis.topRisks.length,
+      },
+      message: stageMessage,
+    });
+  }
   await yieldEventLoop();
 
   beginStage(scan, "complete");
@@ -821,4 +911,5 @@ export function clearScanStore(): void {
   scans.clear();
   configuredDatabaseUrl = undefined;
   hasConfiguredDatabaseUrl = false;
+  attorneyConfig = { ...DEFAULT_ATTORNEY_CONFIG };
 }

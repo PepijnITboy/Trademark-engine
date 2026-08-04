@@ -22,7 +22,8 @@
     "corpus:bridge-100k": "tsx scripts/bridge-100k.ts",
     "corpus:purge-statuses": "tsx scripts/purge-non-allowlist-statuses.ts",
     "corpus:preprocess": "tsx scripts/preprocess-100k.ts",
-    "corpus:preprocess-100k": "tsx scripts/preprocess-100k.ts"
+    "corpus:preprocess-100k": "tsx scripts/preprocess-100k.ts",
+    "bench:scan-timing": "tsx scripts/benchmark-scan-timing.ts"
   },
   "dependencies": {
     "@trademark-engine/corpus-bridge": "workspace:*",

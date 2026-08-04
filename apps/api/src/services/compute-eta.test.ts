@@ -54,9 +54,16 @@ describe("computePercentComplete", () => {
       pruning: "pending",
       comparison: "pending",
       scoring: "pending",
+      attorney_analysis: "pending",
       complete: "pending",
     };
 
     expect(computePercentComplete(SCAN_STAGE_WEIGHTS, statuses)).toBe(8);
+  });
+
+  it("includes attorney_analysis in stage weights", () => {
+    expect(SCAN_STAGE_WEIGHTS.attorney_analysis).toBe(10);
+    const total = Object.values(SCAN_STAGE_WEIGHTS).reduce((sum, w) => sum + w, 0);
+    expect(total).toBe(100);
   });
 });

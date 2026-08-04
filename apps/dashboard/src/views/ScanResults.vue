@@ -2,7 +2,14 @@
 import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
 import { useQuery } from "@tanstack/vue-query";
-import { fetchScanResults, type ScanMarkResults, type ScanResultItem } from "../api/client";
+import {
+  fetchScanResults,
+  type AttorneyAnalysisPayload,
+  type ScanMarkResults,
+} from "../api/client";
+import AttorneyVerdict from "../components/scan-results/AttorneyVerdict.vue";
+import AttorneyRiskList from "../components/scan-results/AttorneyRiskList.vue";
+import { buildAttorneyCopyText } from "../components/scan-results/copy";
 
 const route = useRoute();
 const scanId = computed(() => String(route.params.id));
@@ -27,45 +34,52 @@ const markSections = computed((): ScanMarkResults[] => {
       status: "completed",
       resultCount: payload.resultCount,
       results: payload.results,
+      ...(payload.attorneyAnalysis
+        ? { attorneyAnalysis: payload.attorneyAnalysis }
+        : {}),
     },
   ];
 });
 
 const isBatch = computed(() => (data.value?.marks?.length ?? 0) > 1);
-const totalCandidates = computed(() =>
-  markSections.value.reduce((sum, section) => sum + section.results.length, 0),
-);
 
-function formatResultLine(item: ScanResultItem): string {
-  const score = item.score.experimentalConflictScore.toFixed(1);
-  const explanation = item.explanations[0] ?? "—";
-  const nice =
-    item.niceClasses.length > 0 ? ` | Nice ${item.niceClasses.join(",")}` : "";
-  return `- ${item.markText} | score ${score} | ${item.score.riskBand} | ${item.score.confidence}${nice} | ${explanation}`;
+function attorneyFor(section: ScanMarkResults): AttorneyAnalysisPayload | undefined {
+  return section.attorneyAnalysis ?? data.value?.attorneyAnalysis;
 }
 
-function buildCopyText(): string {
-  const lines: string[] = [];
-  lines.push(`Trademark scan results (${scanId.value})`);
-  lines.push(`Names: ${markSections.value.length} · Candidates: ${totalCandidates.value}`);
-  lines.push("");
-
-  for (const section of markSections.value) {
-    lines.push(`=== ${section.markText} ===`);
-    lines.push(`Status: ${section.status} · ${section.resultCount} candidates`);
-    if (section.error) {
-      lines.push(`Error: ${section.error}`);
-    } else if (section.results.length === 0) {
-      lines.push("No candidates kept for this name.");
-    } else {
-      for (const item of section.results) {
-        lines.push(formatResultLine(item));
-      }
-    }
-    lines.push("");
+function niceByCandidateId(section: ScanMarkResults): Record<string, number[]> {
+  const map: Record<string, number[]> = {};
+  for (const item of section.results) {
+    map[item.candidateId] = item.niceClasses;
   }
+  return map;
+}
 
-  return lines.join("\n").trimEnd() + "\n";
+function placeholderAttorney(): AttorneyAnalysisPayload {
+  return {
+    status: "skipped",
+    candidatesConsidered: 0,
+    topRisks: [],
+    error: "Geen attorney-analyse in deze scan.",
+  };
+}
+
+const hasCopyableAttorney = computed(() =>
+  markSections.value.some((section) => {
+    const analysis = attorneyFor(section);
+    return analysis?.status === "completed" && analysis.topRisks.length > 0;
+  }),
+);
+
+function buildCopyText(): string {
+  return buildAttorneyCopyText({
+    scanId: scanId.value,
+    sections: markSections.value.map((section) => ({
+      markText: section.markText,
+      attorney: attorneyFor(section),
+      niceByCandidateId: niceByCandidateId(section),
+    })),
+  });
 }
 
 async function copyAllResults() {
@@ -74,7 +88,6 @@ async function copyAllResults() {
     await navigator.clipboard.writeText(text);
     copyState.value = "copied";
   } catch {
-    // Fallback for older/blocked clipboard APIs
     const textarea = document.createElement("textarea");
     textarea.value = text;
     textarea.setAttribute("readonly", "");
@@ -94,117 +107,118 @@ async function copyAllResults() {
 </script>
 
 <template>
-  <section>
-    <div class="title-row">
-      <div>
-        <h1>Scan results</h1>
-        <p class="muted">
-          <template v-if="isBatch">
-            Conflict lists per proposed name for scan {{ scanId }}.
-          </template>
-          <template v-else>
-            Top conflicts for scan {{ scanId }} (engine database).
-          </template>
-        </p>
-      </div>
+  <section class="results-page">
+    <div class="toolbar">
+      <p class="scan-id">Scan {{ scanId }}</p>
       <button
-        v-if="data && totalCandidates > 0"
+        v-if="data && hasCopyableAttorney"
         type="button"
         class="copy-all"
         @click="copyAllResults"
       >
         {{
           copyState === "copied"
-            ? "Copied!"
+            ? "Gekopieerd"
             : copyState === "failed"
-              ? "Copy failed"
-              : `Copy all results (${totalCandidates})`
+              ? "Kopiëren mislukt"
+              : "Kopieer advies"
         }}
       </button>
     </div>
 
-    <div v-if="isLoading" class="card">Loading results…</div>
-    <div v-else-if="error" class="card error">{{ (error as Error).message }}</div>
+    <div v-if="isLoading" class="boot">Resultaten laden…</div>
+    <div v-else-if="error" class="boot boot--error">{{ (error as Error).message }}</div>
+
     <template v-else-if="data">
-      <p v-if="isBatch" class="muted summary">
-        {{ data.marks.length }} names · {{ data.resultCount }} candidates total
+      <p v-if="isBatch" class="batch-meta">
+        {{ data.marks.length }} merknamen
       </p>
 
       <div
         v-for="(section, index) in markSections"
         :key="`${section.markText}-${index}`"
-        class="card mark-section"
+        class="mark-block"
       >
-        <div class="section-header">
-          <h2>{{ section.markText }}</h2>
-          <span class="badge">{{ section.status }}</span>
-        </div>
-        <p v-if="section.error" class="error">{{ section.error }}</p>
-        <p v-else class="muted">{{ section.resultCount }} candidates</p>
+        <p v-if="section.error" class="boot boot--error">{{ section.error }}</p>
 
-        <table v-if="section.results.length > 0" class="results-table">
-          <thead>
-            <tr>
-              <th>Mark</th>
-              <th>Score</th>
-              <th>Risk</th>
-              <th>Explanation</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="item in section.results"
-              :key="`${section.markText}-${item.candidateId}`"
-            >
-              <td>{{ item.markText }}</td>
-              <td>{{ item.score.experimentalConflictScore.toFixed(1) }}</td>
-              <td><span class="badge">{{ item.score.riskBand }}</span></td>
-              <td>{{ item.explanations[0] ?? "—" }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <p v-else-if="!section.error" class="muted">No candidates kept for this name.</p>
+        <AttorneyVerdict
+          :mark-text="section.markText"
+          :analysis="attorneyFor(section) ?? placeholderAttorney()"
+        />
+
+        <AttorneyRiskList
+          v-if="attorneyFor(section)?.status === 'completed'"
+          :risks="attorneyFor(section)!.topRisks"
+          :nice-by-candidate-id="niceByCandidateId(section)"
+        />
       </div>
     </template>
   </section>
 </template>
 
 <style scoped>
-.title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 0.5rem;
+.results-page {
+  min-height: calc(100vh - 4rem);
+  padding: 2rem 1.5rem 3.5rem;
+  background:
+    radial-gradient(circle at top, rgba(15, 23, 42, 0.04), transparent 42%),
+    #f8fafc;
 }
 
-.title-row h1 {
-  margin-bottom: 0.35rem;
-}
-
-.copy-all {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-.summary {
-  margin-bottom: 0.75rem;
-}
-
-.mark-section + .mark-section {
-  margin-top: 1rem;
-}
-
-.section-header {
+.toolbar {
+  max-width: 44rem;
+  margin: 0 auto 1.75rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 0.35rem;
 }
 
-.section-header h2 {
+.scan-id,
+.batch-meta {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.batch-meta {
+  max-width: 44rem;
+  margin: 0 auto 1.25rem;
+  text-align: center;
+}
+
+.copy-all {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.copy-all:hover {
+  border-color: #94a3b8;
+}
+
+.boot {
+  max-width: 28rem;
+  margin: 4rem auto;
+  text-align: center;
+  color: #64748b;
+}
+
+.boot--error {
+  color: #b91c1c;
+}
+
+.mark-block + .mark-block {
+  margin-top: 3.5rem;
+  padding-top: 2.5rem;
+  border-top: 1px solid #e2e8f0;
 }
 </style>

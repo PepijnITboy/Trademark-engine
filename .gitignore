@@ -6,6 +6,7 @@ dist
 coverage
 *.log
 logs
+tmp
 playwright-report
 test-results
 .DS_Store

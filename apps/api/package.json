@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
+    "@trademark-engine/attorney-analysis": "workspace:*",
     "@trademark-engine/comparison": "workspace:*",
     "@trademark-engine/corpus-bridge": "workspace:*",
     "@trademark-engine/database": "workspace:*",

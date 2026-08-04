@@ -5,6 +5,15 @@ import {
 } from "@trademark-engine/comparison";
 import { bridgeSampleRows } from "@trademark-engine/corpus-bridge";
 import { createDb } from "@trademark-engine/database";
+import {
+  ENGINE_VERSION,
+  NORMALIZATION_VERSION,
+  PRUNING_PROFILE_VERSION,
+  RETRIEVAL_PROFILE_VERSION,
+  SCORE_VERSION,
+  TOKEN_ANALYSIS_VERSION,
+  TRANSLITERATION_VERSION,
+} from "@trademark-engine/domain";
 import { explainFromEvidence } from "@trademark-engine/explanations";
 import { SAMPLE_CORPUS_ROWS } from "@trademark-engine/fixtures";
 import { createLogger } from "@trademark-engine/observability";
@@ -12,6 +21,7 @@ import { scoreFromFeatures } from "@trademark-engine/risk-engine";
 import Fastify from "fastify";
 import { z } from "zod";
 import type { ApiConfig } from "./config.js";
+import { serializeAttorneyAnalysisForApi } from "./services/attorney-stage.js";
 import {
   fetchDatabaseSnapshot,
   fetchDatabaseStats,
@@ -68,7 +78,19 @@ export async function buildServer(config: ApiConfig) {
   const logger = createLogger({ level: config.logLevel, name: "api" });
   const app = Fastify({ loggerInstance: logger });
 
-  configureScanStore({ databaseUrl: config.databaseUrl });
+  configureScanStore({
+    databaseUrl: config.databaseUrl,
+    attorneyAnalysis: {
+      enabled: config.attorneyAnalysisEnabled,
+      ...(config.anthropicApiKey !== undefined
+        ? { apiKey: config.anthropicApiKey }
+        : {}),
+      model: config.anthropicModel,
+      candidateLimit: config.attorneyAnalysisCandidateLimit,
+      topN: config.attorneyAnalysisTopN,
+      temperature: config.attorneyAnalysisTemperature,
+    },
+  });
 
   await app.register(cors, {
     origin: true,
@@ -76,8 +98,17 @@ export async function buildServer(config: ApiConfig) {
 
   app.get("/health", async () => ({
     status: "ok",
-    engineVersion: config.engineVersion,
+    engineVersion: config.engineVersion || ENGINE_VERSION,
     database: config.databaseUrl ? "connected" : "unavailable",
+    versions: {
+      engine: ENGINE_VERSION,
+      normalization: NORMALIZATION_VERSION,
+      tokenAnalysis: TOKEN_ANALYSIS_VERSION,
+      transliteration: TRANSLITERATION_VERSION,
+      retrieval: RETRIEVAL_PROFILE_VERSION,
+      pruning: PRUNING_PROFILE_VERSION,
+      score: SCORE_VERSION,
+    },
   }));
 
   app.get("/api/database/stats", async (_request, reply) => {
@@ -195,16 +226,27 @@ export async function buildServer(config: ApiConfig) {
 
       const results = getScanResults(request.params.id);
       const marks = getScanMarkResults(request.params.id) ?? [];
+      const attorneyAnalysis = scan.attorneyAnalysis
+        ? serializeAttorneyAnalysisForApi(scan.attorneyAnalysis)
+        : undefined;
       return {
         scanId: scan.id,
         mode: "database",
         resultCount: results?.length ?? 0,
         results: results ?? [],
+        ...(attorneyAnalysis !== undefined ? { attorneyAnalysis } : {}),
         marks: marks.map((item) => ({
           markText: item.markText,
           status: item.status,
           resultCount: item.results.length,
           results: item.results,
+          ...(item.attorneyAnalysis !== undefined
+            ? {
+                attorneyAnalysis: serializeAttorneyAnalysisForApi(
+                  item.attorneyAnalysis,
+                ),
+              }
+            : {}),
           ...(item.error !== undefined ? { error: item.error } : {}),
         })),
       };
